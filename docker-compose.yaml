@@ -15,18 +15,18 @@ x-airflow-common: &airflow-common
     AIRFLOW__CORE__EXECUTOR: LocalExecutor
     AIRFLOW__CORE__LOAD_EXAMPLES: "false"
     AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
-    # Auth (simple password manager)
-    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    AIRFLOW_HOME: /opt/airflow
     # MLflow — use service name so containers can reach each other
     MLFLOW_TRACKING_URI: http://mlflow:5001
     # mini-swe-agent cost tracking
     MSWEA_COST_TRACKING: ignore_errors
   volumes:
-    - ./dags:/opt/airflow/dags                        # DAG files
-    - ./scripts:/opt/airflow/scripts                  # helper scripts
-    - ./runs:/opt/airflow/runs                        # run artifacts
-    - ./mini-swe-agent:/opt/airflow/mini-swe-agent    # swebench config
+    - ./dags:/opt/airflow/dags
+    - ./scripts:/opt/airflow/scripts
+    - ./runs:/opt/airflow/runs
+    - ./mini-swe-agent:/opt/airflow/mini-swe-agent
     - airflow-logs:/opt/airflow/logs
+    - airflow-home:/opt/airflow
     # Share host Docker socket so SWE-bench eval can spin up containers
     - /var/run/docker.sock:/var/run/docker.sock
   depends_on:
@@ -53,17 +53,13 @@ services:
   # ── Airflow bootstrap (runs once then exits) ─────────────────────────────────
   airflow-init:
     <<: *airflow-common
-    command: >
-      bash -c "
+    command:
+      - bash
+      - -c
+      - |
         airflow db migrate &&
-        airflow users create
-          --username admin
-          --password admin
-          --firstname Admin
-          --lastname User
-          --role Admin
-          --email admin@example.com || true
-      "
+        echo '{"admin": "admin"}' > /opt/airflow/simple_auth_manager_passwords.json.generated &&
+        echo "Airflow initialized. Login: admin / admin"
     restart: "no"
 
   # ── Airflow scheduler (also executes tasks with LocalExecutor) ───────────────
@@ -75,10 +71,10 @@ services:
       airflow-init:
         condition: service_completed_successfully
 
-  # ── Airflow webserver ────────────────────────────────────────────────────────
+  # ── Airflow API server (UI + REST API) ──────────────────────────────────────
   airflow-webserver:
     <<: *airflow-common
-    command: webserver
+    command: api-server
     ports:
       - "8080:8080"
     restart: unless-stopped
@@ -86,31 +82,26 @@ services:
       airflow-init:
         condition: service_completed_successfully
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      test: ["CMD", "curl", "-f", "http://localhost:8080/api/v2/version"]
       interval: 30s
       retries: 5
 
   # ── MLflow tracking server ───────────────────────────────────────────────────
   mlflow:
     image: python:3.12-slim
-    command: >
-      bash -c "pip install --quiet mlflow==2.22.1 &&
-               mlflow server
-                 --host 0.0.0.0
-                 --port 5001
-                 --backend-store-uri sqlite:///mlflow/mlflow.db
-                 --default-artifact-root /mlflow/artifacts"
+    command: ["bash", "-c", "pip install --quiet mlflow==2.22.1 && mlflow server --host 0.0.0.0 --port 5001 --backend-store-uri sqlite:////mlflow/mlflow.db --default-artifact-root /mlflow/artifacts"]
     ports:
       - "5001:5001"
     volumes:
       - mlflow-data:/mlflow
     restart: unless-stopped
     healthcheck:
-      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      test: ["CMD", "python3", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:5001/health')"]
       interval: 30s
       retries: 5
 
 volumes:
   postgres-data:
   airflow-logs:
+  airflow-home:
   mlflow-data:
