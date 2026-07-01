@@ -1,0 +1,45 @@
+diff --git a/astropy/table/__init__.py b/astropy/table/__init__.py
+index a32aa7d16..634b7a33a 100644
+--- a/astropy/table/__init__.py
++++ b/astropy/table/__init__.py
+@@ -46,10 +46,11 @@ class Conf(_config.ConfigNamespace):  # noqa
+ 
+ conf = Conf()  # noqa
+ 
++from .ndarray_mixin import NdarrayMixin  # noqa: E402
+ from . import connect  # noqa: E402
+ from .groups import TableGroups, ColumnGroups  # noqa: E402
+ from .table import (Table, QTable, TableColumns, Row, TableFormatter,
+-                    NdarrayMixin, TableReplaceWarning, TableAttribute,
++                    TableReplaceWarning, TableAttribute,
+                     PprintIncludeExclude)  # noqa: E402
+ from .operations import (join, setdiff, hstack, dstack, vstack, unique,  # noqa: E402
+                          TableMergeError, join_skycoord, join_distance)  # noqa: E402
+diff --git a/astropy/table/table.py b/astropy/table/table.py
+index 5afe2127a..c3f591737 100644
+--- a/astropy/table/table.py
++++ b/astropy/table/table.py
+@@ -32,7 +32,6 @@ from .row import Row
+ from .info import TableInfo
+ from .index import Index, _IndexModeContext, get_index
+ from .connect import TableRead, TableWrite
+-from .ndarray_mixin import NdarrayMixin
+ from .mixins.registry import get_mixin_handler
+ from . import conf
+ 
+@@ -1240,11 +1239,10 @@ class Table:
+                                 'did not return a valid mixin column')
+ 
+         # Structured ndarray gets viewed as a mixin unless already a valid
+-        # mixin class
+-        if (not isinstance(data, Column) and not data_is_mixin
+-                and isinstance(data, np.ndarray) and len(data.dtype) > 1):
+-            data = data.view(NdarrayMixin)
+-            data_is_mixin = True
++        # mixin class. Since 6.0, structured arrays are added as Column
++        # directly and no longer wrapped in NdarrayMixin. Prior to 6.0,
++        # this was deprecated with a FutureWarning suggesting users
++        # wrap the data in Column explicitly.
+ 
+         # Get the final column name using precedence.  Some objects may not
+         # have an info attribute. Also avoid creating info as a side effect.

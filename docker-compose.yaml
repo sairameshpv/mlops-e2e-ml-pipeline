@@ -1,0 +1,116 @@
+# Docker Compose deployment for Airflow 3 + MLflow
+# Usage: docker compose up -d
+# Airflow UI : http://localhost:8080  (admin / admin)
+# MLflow  UI : http://localhost:5001
+
+x-airflow-common: &airflow-common
+  build:
+    context: .
+    dockerfile: Dockerfile.airflow
+  env_file: .env
+  environment:
+    # Database
+    AIRFLOW__DATABASE__SQL_ALCHEMY_CONN: postgresql+psycopg2://airflow:airflow@postgres/airflow
+    # Core
+    AIRFLOW__CORE__EXECUTOR: LocalExecutor
+    AIRFLOW__CORE__LOAD_EXAMPLES: "false"
+    AIRFLOW__CORE__DAGS_FOLDER: /opt/airflow/dags
+    # Auth (simple password manager)
+    AIRFLOW__CORE__AUTH_MANAGER: airflow.providers.fab.auth_manager.fab_auth_manager.FabAuthManager
+    # MLflow — use service name so containers can reach each other
+    MLFLOW_TRACKING_URI: http://mlflow:5001
+    # mini-swe-agent cost tracking
+    MSWEA_COST_TRACKING: ignore_errors
+  volumes:
+    - ./dags:/opt/airflow/dags                        # DAG files
+    - ./scripts:/opt/airflow/scripts                  # helper scripts
+    - ./runs:/opt/airflow/runs                        # run artifacts
+    - ./mini-swe-agent:/opt/airflow/mini-swe-agent    # swebench config
+    - airflow-logs:/opt/airflow/logs
+    # Share host Docker socket so SWE-bench eval can spin up containers
+    - /var/run/docker.sock:/var/run/docker.sock
+  depends_on:
+    postgres:
+      condition: service_healthy
+
+services:
+
+  # ── Metadata DB ─────────────────────────────────────────────────────────────
+  postgres:
+    image: postgres:16
+    environment:
+      POSTGRES_USER: airflow
+      POSTGRES_PASSWORD: airflow
+      POSTGRES_DB: airflow
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "airflow"]
+      interval: 5s
+      retries: 10
+    restart: unless-stopped
+
+  # ── Airflow bootstrap (runs once then exits) ─────────────────────────────────
+  airflow-init:
+    <<: *airflow-common
+    command: >
+      bash -c "
+        airflow db migrate &&
+        airflow users create
+          --username admin
+          --password admin
+          --firstname Admin
+          --lastname User
+          --role Admin
+          --email admin@example.com || true
+      "
+    restart: "no"
+
+  # ── Airflow scheduler (also executes tasks with LocalExecutor) ───────────────
+  airflow-scheduler:
+    <<: *airflow-common
+    command: scheduler
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+
+  # ── Airflow webserver ────────────────────────────────────────────────────────
+  airflow-webserver:
+    <<: *airflow-common
+    command: webserver
+    ports:
+      - "8080:8080"
+    restart: unless-stopped
+    depends_on:
+      airflow-init:
+        condition: service_completed_successfully
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8080/health"]
+      interval: 30s
+      retries: 5
+
+  # ── MLflow tracking server ───────────────────────────────────────────────────
+  mlflow:
+    image: python:3.12-slim
+    command: >
+      bash -c "pip install --quiet mlflow==2.22.1 &&
+               mlflow server
+                 --host 0.0.0.0
+                 --port 5001
+                 --backend-store-uri sqlite:///mlflow/mlflow.db
+                 --default-artifact-root /mlflow/artifacts"
+    ports:
+      - "5001:5001"
+    volumes:
+      - mlflow-data:/mlflow
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:5001/health"]
+      interval: 30s
+      retries: 5
+
+volumes:
+  postgres-data:
+  airflow-logs:
+  mlflow-data:

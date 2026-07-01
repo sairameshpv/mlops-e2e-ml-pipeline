@@ -1,0 +1,18 @@
+FROM apache/airflow:3.2.2
+
+USER root
+
+# Docker CLI — needed so the airflow container can talk to the host Docker socket
+# (SWE-bench evaluation harness uses Docker internally)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    docker.io \
+ && rm -rf /var/lib/apt/lists/*
+
+USER airflow
+
+# Install project dependencies into the Airflow Python environment
+COPY pyproject.toml uv.lock ./
+RUN pip install --no-cache-dir \
+    "mini-swe-agent>=2.4.1" \
+    "swebench>=4.1.0" \
+    "mlflow>=2.22.1"

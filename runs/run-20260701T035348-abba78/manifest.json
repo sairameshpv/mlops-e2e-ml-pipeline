@@ -1,0 +1,9 @@
+{
+  "run_id": "run-20260701T035348-abba78",
+  "config": "/Users/sairameshpv/Documents/Nebius/mlops-e2e-ml-pipeline/runs/run-20260701T035348-abba78/config.json",
+  "predictions": "/Users/sairameshpv/Documents/Nebius/mlops-e2e-ml-pipeline/runs/run-20260701T035348-abba78/run-agent/preds.json",
+  "trajectories": "/Users/sairameshpv/Documents/Nebius/mlops-e2e-ml-pipeline/runs/run-20260701T035348-abba78/run-agent/trajectories",
+  "eval_logs": "/Users/sairameshpv/Documents/Nebius/mlops-e2e-ml-pipeline/runs/run-20260701T035348-abba78/run-eval/logs",
+  "eval_reports": "/Users/sairameshpv/Documents/Nebius/mlops-e2e-ml-pipeline/runs/run-20260701T035348-abba78/run-eval/reports",
+  "metrics": "/Users/sairameshpv/Documents/Nebius/mlops-e2e-ml-pipeline/runs/run-20260701T035348-abba78/metrics.json"
+}

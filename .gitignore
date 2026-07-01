@@ -10,3 +10,12 @@ __pycache__
 
 mini-swe-agent/
 SWE-bench/
+
+# Run artifacts (can be large; reference via manifest.json instead)
+/runs/
+
+# MLflow local DB
+mlflow.db
+
+# Docker Compose volumes
+postgres-data/
