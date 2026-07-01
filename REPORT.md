@@ -15,9 +15,9 @@ prepare_run → run_agent → run_eval → summarize_and_log
 | `prepare_run` | Reads Airflow params, auto-generates a `run_id`, creates the `runs/<run-id>/` directory tree, writes `config.json` |
 | `run_agent` | Calls `mini-extra swebench` with DAG params, writes trajectories and `preds.json` to `runs/<run-id>/run-agent/` |
 | `run_eval` | Runs `python -m swebench.harness.run_evaluation` against the produced `preds.json`, writes logs and reports to `runs/<run-id>/run-eval/` |
-| `summarize_and_log` | Parses evaluation report, writes `metrics.json` and `manifest.json`, logs params + metrics + artifact paths to MLflow |
+| `summarize_and_log` | Parses evaluation report, writes `metrics.json`, uploads the run directory to S3 (if configured), writes `manifest.json` (with `s3_uri`), logs params + metrics + artifact paths + `s3_uri` tag to MLflow |
 
-Helper functions (`build_run_config`, `prepare_run_dir`, `run_agent_batch`, `run_swebench_eval`, `collect_metrics`, `log_mlflow_run`) are defined at module level so they can be unit-tested independently of Airflow.
+Helper functions (`build_run_config`, `prepare_run_dir`, `run_agent_batch`, `run_swebench_eval`, `collect_metrics`, `upload_run_to_s3`, `log_mlflow_run`) are defined at module level so they can be unit-tested independently of Airflow.
 
 ---
 
@@ -112,7 +112,7 @@ runs/
   <run-id>/
     config.json          ← all params used for this run
     metrics.json         ← resolve_rate, resolved/submitted counts
-    manifest.json        ← absolute paths to every artifact
+    manifest.json        ← absolute paths to every artifact + s3_uri (if uploaded)
     run-agent/
       preds.json         ← patches in SWE-bench format (keyed by instance_id)
       trajectories/
@@ -182,6 +182,7 @@ Each run logs:
 - **Params**: `run_id`, `model`, `split`, `subset`, `task_slice`, `workers`, `cost_limit`, `timestamp`
 - **Metrics**: `resolve_rate`, `resolved_instances`, `submitted_instances`, `completed_instances`, `empty_patch_instances`, `error_instances`
 - **Artifacts**: `config.json`, `metrics.json`, `manifest.json`
+- **Tags**: `artifact_path` (local run directory), `s3_uri` (remote location — set when S3 is configured)
 
 ### Run Comparison
 
@@ -196,6 +197,47 @@ The config file (`mini-swe-agent/src/minisweagent/config/benchmarks/swebench.yam
 Screenshots:
 - `screenshots/airflow_dag.png` — Airflow Graph view showing all 4 tasks completed
 - `screenshots/mlflow_runs.png` — MLflow UI showing all 3 runs with metrics
+
+---
+
+## S3 Artifact Upload
+
+The `summarize_and_log` task uploads the entire run directory to Nebius Object Storage (S3-compatible) after evaluation completes. Upload is skipped gracefully when the S3 env vars are absent.
+
+### Configuration
+
+Add the following to `.env` (see `.env.example`):
+
+```bash
+S3_ENDPOINT_URL=https://storage.eu-north1.nebius.cloud
+AWS_ACCESS_KEY_ID=<key-id>
+AWS_SECRET_ACCESS_KEY=<secret-key>
+S3_BUCKET=my-mlops-runs
+```
+
+### What Gets Uploaded
+
+Every file under `runs/<run-id>/` is mirrored to:
+
+```
+s3://<S3_BUCKET>/runs/<run-id>/
+  config.json
+  metrics.json
+  manifest.json
+  run-agent/preds.json
+  run-agent/trajectories/...
+  run-eval/reports/...
+  run-eval/logs/...
+```
+
+### Where the URI Is Stored
+
+After upload, the S3 base URI (`s3://<bucket>/runs/<run-id>`) is:
+
+- Written into `manifest.json` under the key `"s3_uri"`
+- Logged to MLflow as a run tag `s3_uri`
+
+This creates a direct link from the MLflow tracking server to the remote artifact location, allowing any run to be traced from metrics → remote storage.
 
 ---
 
@@ -215,6 +257,4 @@ Screenshots:
 
 ## What Would Be Added for Production
 
-- **`docker-compose.yaml`**: replace manual `run-airflow-standalone.sh` + `mlflow server` with `docker compose up -d`
-- **DockerOperator**: replace `subprocess.run` in `run_agent` and `run_eval` with isolated Docker tasks
-- **S3 upload**: add a fifth task to upload `runs/<run-id>/` to Nebius Object Storage and log the URI to MLflow
+- **DockerOperator**: replace `subprocess.run` in `run_agent` and `run_eval` with isolated Docker tasks using the project `Dockerfile.airflow`
