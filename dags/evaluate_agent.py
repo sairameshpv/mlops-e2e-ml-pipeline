@@ -127,7 +127,31 @@ def collect_metrics(eval_dir: Path) -> dict:
     return metrics
 
 
-def log_mlflow_run(run_config: dict, metrics: dict, run_dir: Path) -> None:
+def upload_run_to_s3(run_dir: Path, run_id: str) -> str | None:
+    """Upload run directory to Nebius Object Storage / S3. Returns S3 URI or None if unconfigured."""
+    endpoint = os.environ.get("S3_ENDPOINT_URL")
+    bucket   = os.environ.get("S3_BUCKET")
+    if not endpoint or not bucket:
+        return None
+
+    import boto3  # lazy import — optional dependency
+
+    s3 = boto3.client(
+        "s3",
+        endpoint_url=endpoint,
+        aws_access_key_id=os.environ["AWS_ACCESS_KEY_ID"],
+        aws_secret_access_key=os.environ["AWS_SECRET_ACCESS_KEY"],
+    )
+    base_key = f"runs/{run_id}"
+    for local_file in sorted(run_dir.rglob("*")):
+        if local_file.is_file():
+            key = f"{base_key}/{local_file.relative_to(run_dir)}"
+            s3.upload_file(str(local_file), bucket, key)
+
+    return f"s3://{bucket}/{base_key}"
+
+
+def log_mlflow_run(run_config: dict, metrics: dict, run_dir: Path, s3_uri: str | None = None) -> None:
     import mlflow  # lazy import — only needed at task runtime, not DAG parse time
     tracking_uri = os.environ.get("MLFLOW_TRACKING_URI", "http://localhost:5000")
     mlflow.set_tracking_uri(tracking_uri)
@@ -140,6 +164,8 @@ def log_mlflow_run(run_config: dict, metrics: dict, run_dir: Path) -> None:
         mlflow.log_artifact(str(run_dir / "metrics.json"))
         mlflow.log_artifact(str(run_dir / "manifest.json"))
         mlflow.set_tag("artifact_path", str(run_dir))
+        if s3_uri:
+            mlflow.set_tag("s3_uri", s3_uri)
 
 
 # ---------------------------------------------------------------------------
@@ -188,12 +214,15 @@ def evaluate_agent():
 
     @task
     def summarize_and_log(pipeline_run_id: str, eval_dir: str) -> None:
-        """Parse evaluation reports, write metrics.json + manifest.json, log to MLflow."""
+        """Parse evaluation reports, write metrics.json + manifest.json, upload to S3, log to MLflow."""
         run_dir    = RUNS_DIR / pipeline_run_id
         run_config = json.loads((run_dir / "config.json").read_text())
 
         metrics = collect_metrics(Path(eval_dir))
         (run_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
+
+        # Upload to S3 before writing manifest so the URI is captured in it
+        s3_uri = upload_run_to_s3(run_dir, pipeline_run_id)
 
         manifest = {
             "run_id":       pipeline_run_id,
@@ -203,10 +232,11 @@ def evaluate_agent():
             "eval_logs":    str(run_dir / "run-eval" / "logs"),
             "eval_reports": str(run_dir / "run-eval" / "reports"),
             "metrics":      str(run_dir / "metrics.json"),
+            "s3_uri":       s3_uri,
         }
         (run_dir / "manifest.json").write_text(json.dumps(manifest, indent=2))
 
-        log_mlflow_run(run_config, metrics, run_dir)
+        log_mlflow_run(run_config, metrics, run_dir, s3_uri=s3_uri)
 
     # Wire tasks in order: prepare → agent → eval → log
     rid      = prepare_run()

@@ -14,8 +14,9 @@ SWE-bench/
 # Run artifacts (can be large; reference via manifest.json instead)
 /runs/
 
-# MLflow local DB
+# MLflow local DB and artifact store
 mlflow.db
+mlartifacts/
 
 # Docker Compose volumes
 postgres-data/
